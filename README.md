@@ -1,22 +1,38 @@
 # AltitudeSquatter
 
-Minifilter altitude squatting tool for Windows x64. Displaces security minifilter drivers (WdFilter, MsSecFlt) by placing legitimate drivers at their altitude positions.
+Minifilter altitude squatting tool for Windows x64. Displaces EDR/security minifilter drivers by placing legitimate drivers at their altitude positions.
 
 ## How it works
 
-Windows minifilter drivers are loaded in order of their altitude value. Two drivers cannot occupy the same altitude. This tool sets legitimate boot-start drivers (WIMMount, npsvctrig) to the altitudes of security drivers:
+Windows minifilter drivers are loaded in order of their altitude value. Two drivers cannot occupy the same altitude. This tool sets legitimate boot-start drivers to the altitudes of security drivers. On reboot, the security filters find their altitude already taken.
 
-| Decoy driver | Target altitude | Displaced driver |
-|---|---|---|
-| WIMMount | 385600 | MsSecFlt |
-| npsvctrig | 328010 | WdFilter |
+## Supported targets
 
-Each decoy also gets `Start=0` (boot) and `Group=FSFilter Bottom` to ensure it loads before the security driver. On reboot, the security filters find their altitude already taken.
+| Target | Minifilter | Altitude | Decoy |
+|---|---|---|---|
+| `defender` | WdFilter | 328010 | npsvctrig |
+| `mssecflt` | MsSecFlt | 385600 | WIMMount |
+| `sysmon` | SysmonDrv | 385201 | storqosflt |
+| `crowdstrike` | csagent | 328010 | npsvctrig |
+| `sentinelone` | SentinelMonitor | 385200 | CldFlt |
+| `carbonblack` | CbDefenseFilter | 328000 | Wof |
+| `sophos` | SophosED | 326000 | wcifs |
+| `eset` | eamonm | 328000 | Wof |
+| `kaspersky` | klif | 389800 | FileCrypt |
+| `trendmicro` | TmFileEncDec | 385300 | bindflt |
+| `elastic` | ElasticEndpoint | 385700 | luafv |
+| `cortex` | CyveraK | 328010 | npsvctrig |
+| `cylance` | CylanceDrv | 385100 | storqosflt |
+| `malwarebytes` | MBAMSwissArmy | 385100 | storqosflt |
 
 ## Usage
 
 ```
-AltitudeSquatter.exe
+AltitudeSquatter.exe list                    # Detect installed EDR minifilters
+AltitudeSquatter.exe all                     # Squat all detected EDRs
+AltitudeSquatter.exe defender                # Target Windows Defender only
+AltitudeSquatter.exe defender sysmon         # Target multiple EDRs
+AltitudeSquatter.exe crowdstrike             # Target CrowdStrike
 ```
 
 Requires **administrator privileges**. Reboot required for changes to take effect.
