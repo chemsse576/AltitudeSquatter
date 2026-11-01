@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
 {
     printf("[*] Minifilter altitude squatter\n\n");
 
-    if (argc < 2) {
+    if (argc < 2 || stricmp_local(argv[1], "-h") == 0 || stricmp_local(argv[1], "--help") == 0) {
         PrintUsage();
         return 0;
     }
