@@ -33,6 +33,8 @@ AltitudeSquatter.exe all                     # Squat all detected EDRs
 AltitudeSquatter.exe defender                # Target Windows Defender only
 AltitudeSquatter.exe defender sysmon         # Target multiple EDRs
 AltitudeSquatter.exe crowdstrike             # Target CrowdStrike
+AltitudeSquatter.exe restore                 # Restore all decoy drivers to defaults
+AltitudeSquatter.exe restore defender        # Restore specific target
 ```
 
 Requires **administrator privileges**. Reboot required for changes to take effect.

